@@ -2,16 +2,16 @@ import torch
 import torch.nn as nn
 
 
-def conv1d_to_mlp(layer: torch.nn.Conv1d, input_size: int) -> torch.nn.Linear:
-    assert isinstance(layer, nn.Conv1d), f"Conv1d layer expected, got {type(layer)}."
-    assert layer.groups == 1, "Grouped convolutions are not supported."
-    assert layer.dilation[0] == 1, "Dilation is not supported."
+def conv1d_to_mlp(conv1d: torch.nn.Conv1d, input_size: int) -> torch.nn.Linear:
+    assert isinstance(conv1d, nn.Conv1d), f"Conv1d layer expected, got {type(conv1d)}."
+    assert conv1d.groups == 1, "Grouped convolutions are not supported."
+    assert conv1d.dilation[0] == 1, "Dilation is not supported."
 
-    C_in = layer.in_channels
-    C_out = layer.out_channels
-    K = layer.kernel_size[0]
-    stride = layer.stride[0]
-    padding = layer.padding[0]
+    C_in = conv1d.in_channels
+    C_out = conv1d.out_channels
+    K = conv1d.kernel_size[0]
+    stride = conv1d.stride[0]
+    padding = conv1d.padding[0]
 
     L_in = input_size
     L_out = (L_in + 2 * padding - K) // stride + 1
@@ -19,14 +19,14 @@ def conv1d_to_mlp(layer: torch.nn.Conv1d, input_size: int) -> torch.nn.Linear:
     in_features = C_in * L_in
     out_features = C_out * L_out
 
-    device = layer.weight.device
-    dtype = layer.weight.dtype
+    device = conv1d.weight.device
+    dtype = conv1d.weight.dtype
 
     W_dense = torch.zeros((out_features, in_features), device=device, dtype=dtype)
     b_dense = torch.zeros((out_features,), device=device, dtype=dtype)
 
-    weight = layer.weight.detach().clone().view(C_out, C_in, K)
-    bias = layer.bias.detach().clone() if layer.bias is not None else torch.zeros(C_out, device=device, dtype=dtype)
+    weight = conv1d.weight.detach().clone().view(C_out, C_in, K)
+    bias = conv1d.bias.detach().clone() if conv1d.bias is not None else torch.zeros(C_out, device=device, dtype=dtype)
 
     for co in range(C_out):
         for pos in range(L_out):
@@ -39,23 +39,22 @@ def conv1d_to_mlp(layer: torch.nn.Conv1d, input_size: int) -> torch.nn.Linear:
                         in_index = ci * L_in + in_pos
                         W_dense[out_index, in_index] = weight[co, ci, k]
 
-    fc = nn.Linear(in_features, out_features, bias=True)
-    fc.weight.data.copy_(W_dense)
-    fc.bias.data.copy_(b_dense)
+    linear = nn.Linear(in_features, out_features, bias=True)
+    linear.weight.data.copy_(W_dense)
+    linear.bias.data.copy_(b_dense)
 
-    fc.to(device=device, dtype=dtype)
-    return fc
+    linear.to(device=device, dtype=dtype)
+    return linear
 
 
 def sequential_to_mlp(model: nn.Sequential, input_size: int) -> nn.Sequential:
     layers = []
 
     for layer in model:
-        print(input_size)
         if isinstance(layer, nn.Conv1d):
             linear = conv1d_to_mlp(layer, input_size)
 
-            x = torch.zeros(1, input_size * layer.in_channels)
+            x = torch.zeros(1, input_size * layer.in_channels, device=linear.weight.device)
             output = linear(x)
             input_size = output.shape[-1] // layer.out_channels
 
