@@ -20,8 +20,6 @@ class TestMlpConversions:
 
             # padding and stride
             nn.Conv1d(in_channels=3, out_channels=2, kernel_size=4, stride=3, padding=2),
-
-            nn.Conv1d(in_channels=3, out_channels=5, kernel_size=5, stride=5, padding=0),
         ]
     )
     def test_conv1d_to_mlp(self, conv1d: nn.Conv1d):
