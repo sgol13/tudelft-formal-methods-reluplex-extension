@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 
 
 def select_samples(xs: np.ndarray, ys: np.ndarray, num: int):
@@ -67,3 +68,18 @@ def plot_training_stats(train_losses: list[float], val_accuracies: list[float], 
 
     plt.tight_layout()
     plt.show()
+
+
+def save_test_dataset(x_test: np.ndarray, y_test: np.ndarray, predictions: np.ndarray, path: str, num_samples: int):
+    x_test = x_test[:num_samples]
+    y_test = y_test[:num_samples]
+    predictions = predictions[:num_samples]
+
+    with open(path, 'w') as f:
+        for i in range(x_test.shape[0]):
+            label = y_test[i]
+            pred = predictions[i]
+            x = x_test[i]
+
+            line = f"{label} {pred} {' '.join(map(str, x))}\n"
+            f.write(line)
