@@ -45,3 +45,33 @@ def conv1d_to_mlp(layer: torch.nn.Conv1d, input_size: int) -> torch.nn.Linear:
 
     fc.to(device=device, dtype=dtype)
     return fc
+
+
+def sequential_to_mlp(model: nn.Sequential, input_size: int) -> nn.Sequential:
+    layers = []
+
+    for layer in model:
+        print(input_size)
+        if isinstance(layer, nn.Conv1d):
+            linear = conv1d_to_mlp(layer, input_size)
+
+            x = torch.zeros(1, input_size * layer.in_channels)
+            output = linear(x)
+            input_size = output.shape[-1] // layer.out_channels
+
+            layers.append(linear)
+
+        elif isinstance(layer, nn.Linear):
+            layers.append(layer)
+            input_size = layer.out_features
+
+        elif isinstance(layer, nn.Flatten):
+            continue
+
+        elif isinstance(layer, nn.ReLU):
+            layers.append(nn.ReLU())
+
+        else:
+            raise NotImplementedError(f"Layer type {type(layer)} is not supported.")
+
+    return nn.Sequential(*layers)
