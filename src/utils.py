@@ -81,5 +81,5 @@ def save_test_dataset(x_test: np.ndarray, y_test: np.ndarray, predictions: np.nd
             pred = predictions[i]
             x = x_test[i]
 
-            line = f"{label} {pred} {' '.join(map(str, x))}\n"
+            line = f"{label} {pred} {' '.join(map(lambda t: f'{t.item():.4f}', x))}\n"
             f.write(line)
