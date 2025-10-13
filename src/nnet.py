@@ -34,16 +34,20 @@ def save_as_nnet(sequential: nn.Sequential, path: str):
     nnet_rows.append('0')
 
     # 5: Minimum values of inputs (used to keep inputs within expected range)
-    nnet_rows.append('-')
+    mins = ','.join(['0.0'] * linear_layers[0].in_features)
+    nnet_rows.append(mins)
 
     # 6: Maximum values of inputs (used to keep inputs within expected range)
-    nnet_rows.append('-')
+    maxes = ','.join(['0.0'] * linear_layers[0].in_features)
+    nnet_rows.append(maxes)
 
     # 7: Mean values of inputs and one value for all outputs (used for normalization)
-    nnet_rows.append('-')
+    means = ','.join(['0.0'] * (linear_layers[0].in_features + 1))
+    nnet_rows.append(means)
 
     # 8: Range values of inputs and one value for all outputs (used for normalization)
-    nnet_rows.append('-')
+    ranges = ','.join(['1.0'] * (linear_layers[0].in_features + 1))
+    nnet_rows.append(ranges)
 
     # 9+: Begin defining the weight matrix for the first layer, followed by the bias vector.
     # The weights and biases for the second layer follow after,
@@ -55,9 +59,9 @@ def save_as_nnet(sequential: nn.Sequential, path: str):
         for row in weights:
             nnet_rows.append(','.join(map(str, row)))
 
-        # biases
         biases = layer.bias.detach().cpu().numpy()
-        nnet_rows.append(','.join(map(str, biases)))
+        for bias in biases:
+            nnet_rows.append(str(bias))
 
     with open(path, 'w') as f:
         f.write('\n'.join(nnet_rows))
