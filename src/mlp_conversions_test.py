@@ -138,6 +138,6 @@ class TestMlpConversions:
 
         # then
         sequential_output = sequential(x.view(-1, 1, x.shape[-1]))
-        # mlp_output = mlp(x)
-        #
-        # assert torch.allclose(sequential_output, mlp_output, atol=1e-4)
+
+        mlp_output = mlp(x)
+        assert torch.allclose(sequential_output, mlp_output, atol=1e-4)
