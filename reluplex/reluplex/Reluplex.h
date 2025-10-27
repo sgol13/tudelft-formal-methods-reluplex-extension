@@ -293,7 +293,7 @@ public:
             storePreprocessedMatrix();
 
             printf( "Initialization steps over.\n" );
-            printStatistics();
+            //printStatistics();
             dump();
             printf( "Starting the main loop\n" );
 
@@ -304,7 +304,7 @@ public:
                 if ( allVarsWithinBounds() && allRelusHold() )
                 {
                     dump();
-                    printStatistics();
+                    //printStatistics();
                     _finalStatus = Reluplex::SAT;
                     end = Time::sampleMicro();
                     _totalProgressTimeMilli += Time::timePassed( start, end );
@@ -383,12 +383,13 @@ public:
                     return true;
                 }
             }
-
-            if ( _numCallsToProgress % PRINT_STATISTICS == 0 )
+            //DISABLE STATISTICS PRINTING
+            /*if ( _numCallsToProgress % PRINT_STATISTICS == 0 )
                 printStatistics();
 
             if ( _printAssignment && _numCallsToProgress % PRINT_ASSIGNMENT == 0 )
                 printAssignment();
+            */
 
             dump();
 
@@ -771,6 +772,8 @@ public:
 
     void printStatistics()
     {
+
+        return;
         countVarsWithInfiniteBounds();
 
         printf( "\n" );
@@ -892,6 +895,7 @@ public:
 
     void printFinalStatistics()
     {
+        return;
         try
         {
             File outputFile( _finalOutputFile );
@@ -2582,14 +2586,14 @@ public:
     {
         countVarsWithInfiniteBounds();
         log( Stringf( "makeAllBoundsFinite -- Starting (%u vars with infinite bounds)\n", _varsWithInfiniteBounds ) );
-        printStatistics();
+        //printStatistics();
 
         for ( const auto &basic : _basicVariables )
             makeAllBoundsFiniteOnRow( basic );
 
         countVarsWithInfiniteBounds();
         log( Stringf( "makeAllBoundsFinite -- Done (%u vars with infinite bounds)\n", _varsWithInfiniteBounds ) );
-        printStatistics();
+        //printStatistics();
 
         if ( _varsWithInfiniteBounds != 0 )
             throw Error( Error::EXPECTED_NO_INFINITE_VARS );
