@@ -55,6 +55,8 @@ CFLAGS += \
 	-Wno-deprecated \
 	-Wno-deprecated-copy \
 	-Wno-unused-but-set-variable \
+	-Wno-vla-cxx-extension \
+	-Wno-unused-private-field \
 	-std=c++0x \
 	-O3 \
 	\

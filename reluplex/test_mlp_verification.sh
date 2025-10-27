@@ -26,7 +26,7 @@ echo "✓ Found model_mlp.nnet in nnet directory"
 # Try to compile the MLP verification
 echo ""
 echo "Compiling MLP verification..."
-cd check_properties/mlp_verification
+cd check_properties
 make clean
 make
 
@@ -38,21 +38,6 @@ else
 fi
 
 # Go back to root directory
-cd ../..
-
-# Try to compile all properties
-echo ""
-echo "Compiling all properties..."
-cd check_properties
-make
-
-if [ $? -eq 0 ]; then
-    echo "✓ All properties compiled successfully"
-else
-    echo "✗ Property compilation failed"
-    exit 1
-fi
-
 cd ..
 
 # Check if the binary was created

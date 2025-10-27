@@ -18,7 +18,7 @@
 #include "Reluplex.h"
 #include "MString.h"
 
-const char *FULL_NET_PATH = "./nnet/ACASXU_run2a_1_1_batch_2000.nnet";
+const char *FULL_NET_PATH = "./nnet/model_mlp.nnet";
 
 struct Index
 {

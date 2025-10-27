@@ -12,12 +12,16 @@
 
 #include <cstdio>
 #include <signal.h>
-#include <cstring>
+#include <fstream>
+#include <sstream>
+#include <vector>
 
 #include "AcasNeuralNetwork.h"
 #include "File.h"
 #include "Reluplex.h"
 #include "MString.h"
+
+const char *FULL_NET_PATH = "./nnet/model_mlp.nnet";
 
 struct Index
 {
@@ -46,30 +50,122 @@ struct Index
     }
 };
 
-// For MLP models without normalization, we use identity functions
-double normalizeInput( unsigned /* inputIndex */, double value, AcasNeuralNetwork & /* neuralNetwork */ )
+double normalizeInput( unsigned inputIndex, double value, AcasNeuralNetwork &neuralNetwork )
 {
-    // Since our MLP model doesn't use normalization (indicated by '-' in the .nnet file),
-    // we return the value as-is
-    return value;
+    double min = neuralNetwork._network->mins[inputIndex];
+    double max = neuralNetwork._network->maxes[inputIndex];
+    double mean = neuralNetwork._network->means[inputIndex];
+    double range = neuralNetwork._network->ranges[inputIndex];
+
+    if ( value < min )
+        value = min;
+    else if ( value > max )
+        value = max;
+
+    return ( value - mean ) / range;
 }
 
-double unnormalizeInput( unsigned /* inputIndex */, double value, AcasNeuralNetwork & /* neuralNetwork */ )
+double unnormalizeInput( unsigned inputIndex, double value, AcasNeuralNetwork &neuralNetwork )
 {
-    // Identity function for unnormalized inputs
-    return value;
+    double mean = neuralNetwork._network->means[inputIndex];
+    double range = neuralNetwork._network->ranges[inputIndex];
+
+    return ( value * range ) + mean;
 }
 
-double unnormalizeOutput( double output, AcasNeuralNetwork & /* neuralNetwork */ )
+double unnormalizeOutput( double output, AcasNeuralNetwork &neuralNetwork )
 {
-    // Identity function for unnormalized outputs
-    return output;
+    int inputSize = neuralNetwork._network->inputSize;
+    double mean = neuralNetwork._network->means[inputSize];
+    double range = neuralNetwork._network->ranges[inputSize];
+
+    return ( output - mean ) / range;
 }
 
-double normalizeOutput( double output, AcasNeuralNetwork & /* neuralNetwork */ )
+double normalizeOutput( double output, AcasNeuralNetwork &neuralNetwork )
 {
-    // Identity function for unnormalized outputs
-    return output;
+    int inputSize = neuralNetwork._network->inputSize;
+    double mean = neuralNetwork._network->means[inputSize];
+    double range = neuralNetwork._network->ranges[inputSize];
+
+    return ( output * range ) + mean;
+}
+
+
+void readCSVFile(std::array<std::array<double, 40>, 10> &Inputs,
+                 const std::string &csvFilePath = "perfect_predictions.csv")
+{
+    std::ifstream file(csvFilePath);
+    if (!file.is_open())
+        throw std::runtime_error("Failed to open CSV file: " + csvFilePath);
+
+    std::string line;
+    unsigned lineNo = 0;
+    unsigned rowIndex = 0;
+
+    auto trim = [](std::string &s) {
+        size_t b = s.find_first_not_of(" \t\r");
+        size_t e = s.find_last_not_of(" \t\r");
+        if (b == std::string::npos) { s.clear(); return; }
+        s = s.substr(b, e - b + 1);
+    };
+
+    while (std::getline(file, line)) {
+        trim(line);
+        if (line.empty() || line[0] == '#')
+            continue; // skip comments or blanks
+
+        if (rowIndex >= Inputs.size())
+            throw std::runtime_error("CSV file has more than 10 data lines; expected 10.");
+
+        std::stringstream ss(line);
+        std::string tok;
+        unsigned colIndex = 0;
+
+        while (std::getline(ss, tok, ',')) {
+            trim(tok);
+            if (tok.empty())
+                throw std::runtime_error("Empty value at line " + std::to_string(lineNo + 1));
+
+            if (colIndex >= Inputs[rowIndex].size())
+                throw std::runtime_error("Line " + std::to_string(lineNo + 1) +
+                                         " has more than 40 values.");
+
+            Inputs[rowIndex][colIndex++] = std::stod(tok);
+        }
+
+        if (colIndex != Inputs[rowIndex].size()) {
+            throw std::runtime_error("Line " + std::to_string(lineNo + 1) +
+                                     " has " + std::to_string(colIndex) +
+                                     " values; expected 40.");
+        }
+
+        ++rowIndex;
+        ++lineNo;
+    }
+
+    if (rowIndex < Inputs.size()) {
+        throw std::runtime_error("CSV file contains only " + std::to_string(rowIndex) +
+                                 " data lines; expected 10.");
+    }
+}
+
+
+void getFixedOutputs( const Vector<double> &fixedInputs,
+                      Vector<double> &fixedOutputs,
+                      unsigned outputLayerSize,
+                      AcasNeuralNetwork &network )
+{
+    network.evaluate( fixedInputs, fixedOutputs, outputLayerSize );
+}
+
+void findMaximal( Vector<double> &fixedOutputs, unsigned &maximal )
+{
+    maximal = 0;
+
+    for ( unsigned i = 0; i < fixedOutputs.size(); ++i )
+        if ( fixedOutputs[i] > fixedOutputs[maximal] )
+            maximal = i;
 }
 
 Reluplex *lastReluplex = NULL;
@@ -77,96 +173,68 @@ Reluplex *lastReluplex = NULL;
 void got_signal( int )
 {
     printf( "Got signal\n" );
+
     if ( lastReluplex )
     {
         lastReluplex->quit();
     }
 }
 
-void printUsage( const char *programName )
+bool advMain( int argc, char **argv, unsigned inputPoint, double inputDelta, unsigned runnerUp, Vector<double> &fixedInputs)
 {
-    printf( "Usage: %s <network_path> [output_file] [input_bounds] [property_type] [property_params]\n", programName );
-    printf( "\n" );
-    printf( "Arguments:\n" );
-    printf( "  network_path    : Path to the .nnet file\n" );
-    printf( "  output_file     : Optional output file for results\n" );
-    printf( "  input_bounds    : Optional input bounds specification\n" );
-    printf( "  property_type   : Type of property to verify (robustness, output_bounds, classification)\n" );
-    printf( "  property_params : Parameters for the property\n" );
-    printf( "\n" );
-    printf( "Examples:\n" );
-    printf( "  %s model_mlp.nnet\n", programName );
-    printf( "  %s model_mlp.nnet results.txt\n", programName );
-    printf( "  %s model_mlp.nnet results.txt \"all:[-1,1]\" robustness 0.1\n", programName );
-    printf( "  %s model_mlp.nnet results.txt \"0:[-0.5,0.5]\" output_bounds \"0:>0.5\"\n", programName );
-    printf( "  %s model_mlp.nnet results.txt \"all:[-1,1]\" classification 0\n", programName );
-}
-
-int main( int argc, char **argv )
-{
-    struct sigaction sa;
-    memset( &sa, 0, sizeof(sa) );
-    sa.sa_handler = got_signal;
-    sigfillset( &sa.sa_mask );
-    sigaction( SIGQUIT, &sa, NULL );
-
-    String networkPath;
-    char *finalOutputFile = NULL;
-    char *inputBoundsStr = NULL;
-    char *propertyType = NULL;
-    char *propertyParams = NULL;
+    String networkPath = FULL_NET_PATH;
+    char *finalOutputFile;
 
     if ( argc < 2 )
-    {
-        printUsage( argv[0] );
-        exit( 1 );
-    }
+        finalOutputFile = NULL;
     else
-        networkPath = argv[1];
+        finalOutputFile = argv[1];
 
-    if ( argc >= 3 )
-        finalOutputFile = argv[2];
-    
-    if ( argc >= 4 )
-        inputBoundsStr = argv[3];
-    
-    if ( argc >= 5 )
-        propertyType = argv[4];
-    
-    if ( argc >= 6 )
-        propertyParams = argv[5];
-
-    printf( "Loading network: %s\n", networkPath.ascii() );
     AcasNeuralNetwork neuralNetwork( networkPath.ascii() );
+
 
     unsigned numLayersInUse = neuralNetwork.getNumLayers() + 1;
     unsigned outputLayerSize = neuralNetwork.getLayerSize( numLayersInUse - 1 );
-    unsigned inputLayerSize = neuralNetwork.getLayerSize( 0 );
 
-    printf( "Network loaded successfully!\n" );
-    printf( "  Input layer size: %u\n", inputLayerSize );
-    printf( "  Output layer size: %u\n", outputLayerSize );
-    printf( "  Number of layers: %u\n", numLayersInUse );
+    printf( "Num layers in use: %u\n", numLayersInUse );
+    printf( "Output layer size: %u\n", outputLayerSize );
+
+    unsigned inputLayerSize = neuralNetwork.getLayerSize( 0 );
 
     unsigned numReluNodes = 0;
     for ( unsigned i = 1; i < numLayersInUse - 1; ++i )
         numReluNodes += neuralNetwork.getLayerSize( i );
 
-    printf( "  ReLU nodes: %u\n", numReluNodes );
+    printf( "Input nodes = %u, relu nodes = %u, output nodes = %u\n", inputLayerSize, numReluNodes, outputLayerSize );
+
+    Vector<double> fixedOutputs;
+
+    //getFixedInputs( fixedInputs, inputPoint );
+    getFixedOutputs( fixedInputs, fixedOutputs, outputLayerSize, neuralNetwork );
+
+    unsigned maximal;
+    findMaximal( fixedOutputs, maximal );
+
+    if ( runnerUp >= maximal )
+        ++runnerUp;
+
+    printf( "Outputs are: \n" );
+    for ( unsigned i = 0; i < fixedOutputs.size(); ++i )
+    {
+        printf( "\toutput[%u] = %lf\n", i, fixedOutputs[i] );
+    }
+
+    printf( "maximal: %u. runner up: %u\n", maximal, runnerUp );
 
     // Total size of the tableau:
     //   1. Input vars appear once
     //   2. Each internal var has a B instance, an F instance, and an auxiliary var for the B equation
     //   3. Each output var has an instance and an auxiliary var for its equation
-    //   4. A single variable for the constants
-    unsigned totalVariables = inputLayerSize + ( 3 * numReluNodes ) + ( 2 * outputLayerSize ) + 1;
-    printf( "  Total variables: %u\n", totalVariables );
-    printf( "  Breakdown: input=%u, relu=%u, output=%u, constant=1\n", 
-            inputLayerSize, 3 * numReluNodes, 2 * outputLayerSize );
-    
-    Reluplex reluplex( totalVariables,
+    //   4. A single variable for the output constraints
+    //   5. A single variable for the constants
+    Reluplex reluplex( inputLayerSize + ( 3 * numReluNodes ) + ( 2 * outputLayerSize ) + 1 + 1,
                        finalOutputFile,
-                       networkPath );
+                       Stringf( "Point_%u_Delta_%.5lf_runnerUp_%u", inputPoint, inputDelta, runnerUp ) );
 
     lastReluplex = &reluplex;
 
@@ -216,35 +284,50 @@ int main( int argc, char **argv )
 
     unsigned constantVar = nodeToVars.size() + nodeToAux.size();
 
+    unsigned outputSlackVar = constantVar + 1;
+
     // Set bounds for constant var
     reluplex.setLowerBound( constantVar, 1.0 );
     reluplex.setUpperBound( constantVar, 1.0 );
 
-    // Set default input bounds (can be overridden by command line arguments)
-    double defaultMin = -10.0;
-    double defaultMax = 10.0;
-    
-    // Parse input bounds if provided
-    if ( inputBoundsStr )
+    // Set bounds for inputs (robust against negative ranges or flipped stats)
+    for (unsigned i = 0; i < inputLayerSize; ++i)
     {
-        printf( "Parsing input bounds: %s\n", inputBoundsStr );
-        // Simple parser for "all:[min,max]" or "0:[min,max],1:[min,max],..."
-        // For now, we'll use a simple approach
-        if ( strncmp( inputBoundsStr, "all:", 4 ) == 0 )
-        {
-            sscanf( inputBoundsStr + 4, "[%lf,%lf]", &defaultMin, &defaultMax );
-            printf( "Setting all inputs to range [%.3f, %.3f]\n", defaultMin, defaultMax );
+        // robust against reversed mins/maxes or negative ranges
+        /*
+        const double nMin = ( neuralNetwork._network->mins[i]  - neuralNetwork._network->means[i] )
+                            / neuralNetwork._network->ranges[i];
+        const double nMax = ( neuralNetwork._network->maxes[i] - neuralNetwork._network->means[i] )
+                            / neuralNetwork._network->ranges[i];
+        double realLo = std::min(nMin, nMax);
+        double realHi = std::max(nMin, nMax);
+        */
+
+        // target window around the chosen (already-normalized) input
+        double lo = fixedInputs[i] - inputDelta;
+        double hi = fixedInputs[i] + inputDelta;
+
+        // clamp correctly: lower = max(...), upper = min(...)
+        /*
+        lo = std::max(lo, realLo);
+        hi = std::min(hi, realHi);
+
+        // repair if something still inverted due to edge cases
+        if (lo > hi) {
+            const double clamped = std::clamp(fixedInputs[i], realLo, realHi);
+            lo = hi = clamped; // collapse to feasible point
         }
+        */
+
+        printf("Bounds for input %u: [ %.10lf, %.10lf ]\n", i, lo, hi);
+        reluplex.setLowerBound(nodeToVars[Index(0, i, true)], lo);
+        reluplex.setUpperBound(nodeToVars[Index(0, i, true)], hi);
     }
 
-    // Set bounds for inputs
-    for ( unsigned i = 0; i < inputLayerSize ; ++i )
-    {
-        printf( "Setting bounds for input %u: [ %.3f, %.3f ]\n", i, defaultMin, defaultMax );
-        reluplex.setLowerBound( nodeToVars[Index(0, i, true)], defaultMin );
-        reluplex.setUpperBound( nodeToVars[Index(0, i, true)], defaultMax );
-    }
-
+    // Set bounds for the output slack var. It's maximal - runnerUp,
+    // so we want it to be positive - i.e., runner up scored lower.
+    reluplex.setLowerBound( outputSlackVar, 1e-6 );
+    reluplex.markBasic( outputSlackVar );
     // Declare relu pairs and set bounds
     for ( unsigned i = 1; i < numLayersInUse - 1; ++i )
     {
@@ -259,92 +342,16 @@ int main( int argc, char **argv )
     }
 
     printf( "Number of auxiliary variables: %u\n", nodeToAux.size() );
-    printf( "Number of node variables: %u\n", nodeToVars.size() );
 
     // Mark all aux variables as basic and set their bounds to zero
-    printf( "Marking auxiliary variables as basic...\n" );
     for ( const auto &it : nodeToAux )
     {
         reluplex.markBasic( it.second );
         reluplex.setLowerBound( it.second, 0.0 );
         reluplex.setUpperBound( it.second, 0.0 );
     }
-    printf( "Auxiliary variables marked.\n" );
-
-    // Set up property constraints based on property type
-    if ( propertyType )
-    {
-        printf( "Setting up property: %s with params: %s\n", propertyType, propertyParams ? propertyParams : "none" );
-        
-        if ( strcmp( propertyType, "classification" ) == 0 )
-        {
-            // Property: output for class X is the maximum
-            int targetClass = 0;
-            if ( propertyParams )
-                targetClass = atoi( propertyParams );
-            
-            printf( "Verifying that class %d has the maximum output\n", targetClass );
-            
-            // For each other class, ensure target class output is greater
-            for ( unsigned i = 0; i < outputLayerSize; ++i )
-            {
-                if ( i != (unsigned)targetClass )
-                {
-                    // output[targetClass] > output[i]
-                    // This means: output[targetClass] - output[i] > 0
-                    // We'll set a lower bound on the difference
-                    // Note: This is a simplified approach - in practice, you might need to add auxiliary variables
-                    printf( "Setting constraint: output[%d] > output[%d]\n", targetClass, i );
-                }
-            }
-        }
-        else if ( strcmp( propertyType, "output_bounds" ) == 0 )
-        {
-            // Property: specific output bounds
-            if ( propertyParams )
-            {
-                // Parse "output_index:>value" or "output_index:<value"
-                int outputIndex;
-                char op;
-                double value;
-                if ( sscanf( propertyParams, "%d:%c%lf", &outputIndex, &op, &value ) == 3 )
-                {
-                    if ( outputIndex >= 0 && outputIndex < (int)outputLayerSize )
-                    {
-                        if ( op == '>' )
-                        {
-                            printf( "Setting lower bound for output %d: > %.3f\n", outputIndex, value );
-                            // reluplex.setLowerBound( nodeToVars[Index(numLayersInUse - 1, outputIndex, false)], value );
-                        }
-                        else if ( op == '<' )
-                        {
-                            printf( "Setting upper bound for output %d: < %.3f\n", outputIndex, value );
-                            // reluplex.setUpperBound( nodeToVars[Index(numLayersInUse - 1, outputIndex, false)], value );
-                        }
-                    }
-                }
-            }
-        }
-        else if ( strcmp( propertyType, "robustness" ) == 0 )
-        {
-            // Property: local robustness around a point
-            double epsilon = 0.1;
-            if ( propertyParams )
-                epsilon = atof( propertyParams );
-            
-            printf( "Setting up local robustness with epsilon = %.3f\n", epsilon );
-            // This would require setting specific input values and checking robustness
-            // For now, we'll just print the epsilon value
-        }
-    }
-    else
-    {
-        // Default property: just check satisfiability
-        printf( "No specific property set - checking general satisfiability\n" );
-    }
 
     // Populate the table
-    printf( "Populating tableau...\n" );
     for ( unsigned layer = 0; layer < numLayersInUse - 1; ++layer )
     {
         unsigned targetLayerSize;
@@ -378,6 +385,15 @@ int main( int argc, char **argv )
         }
     }
 
+    // Slack var row: maximal - runnerUp
+    unsigned maximalVar = nodeToVars[Index(numLayersInUse - 1, maximal, false)];
+    unsigned runnerUpVar = nodeToVars[Index(numLayersInUse - 1, runnerUp, false)];
+
+    //Changed to inverse
+    reluplex.initializeCell( outputSlackVar, outputSlackVar, -1 );
+    reluplex.initializeCell( outputSlackVar, runnerUpVar, 1 );
+    reluplex.initializeCell( outputSlackVar, maximalVar, -1 );
+
     reluplex.setLogging( false );
     reluplex.setDumpStates( false );
     reluplex.toggleAlmostBrokenReluEliminiation( false );
@@ -385,54 +401,144 @@ int main( int argc, char **argv )
     timeval start = Time::sampleMicro();
     timeval end;
 
-    printf( "\nStarting Reluplex verification...\n" );
+    bool sat = false;
 
     try
     {
+        Vector<double> inputs;
+        Vector<double> outputs;
+
+        double totalError = 0.0;
+
         Reluplex::FinalStatus result = reluplex.solve();
-
-        end = Time::sampleMicro();
-
-        printf( "\nVerification completed!\n" );
-        printf( "Result: %s\n", result == Reluplex::SAT ? "SAT" : "UNSAT" );
-        printf( "Time: %.3f seconds\n", Time::timePassed( start, end ) / 1000.0 );
-
         if ( result == Reluplex::SAT )
         {
-            printf( "\nCounterexample found:\n" );
-            printf( "Input values:\n" );
+            printf( "Solution found!\n\n" );
             for ( unsigned i = 0; i < inputLayerSize; ++i )
             {
-                double value = reluplex.getAssignment( nodeToVars[Index(0, i, true)] );
-                printf( "  Input[%u] = %.6f\n", i, value );
+                double assignment = reluplex.getAssignment( nodeToVars[Index(0, i, true)] );
+                printf( "input[%u] = %lf. Normalized: %lf.\n",
+                        i, unnormalizeInput( i, assignment, neuralNetwork ), assignment );
+                inputs.append( assignment );
             }
-            
-            printf( "\nOutput values:\n" );
+
+            printf( "\n" );
             for ( unsigned i = 0; i < outputLayerSize; ++i )
             {
-                double value = reluplex.getAssignment( nodeToVars[Index(numLayersInUse - 1, i, false)] );
-                printf( "  Output[%u] = %.6f\n", i, value );
+                printf( "output[%u] = %.10lf. Normalized: %lf\n", i,
+                        reluplex.getAssignment( nodeToVars[Index(numLayersInUse - 1, i, false)] ),
+                        normalizeOutput( reluplex.getAssignment( nodeToVars[Index(numLayersInUse - 1, i, false)] ),
+                                         neuralNetwork ) );
             }
-        }
 
-        if ( finalOutputFile )
+            printf( "\nOutput using nnet.cpp:\n" );
+
+            neuralNetwork.evaluate( inputs, outputs, outputLayerSize );
+            unsigned i = 0;
+            for ( const auto &output : outputs )
+            {
+                printf( "output[%u] = %.10lf. Normalized: %lf\n", i, output,
+                        normalizeOutput( output, neuralNetwork ) );
+
+                totalError +=
+                    FloatUtils::abs( output -
+                                     reluplex.getAssignment( nodeToVars[Index(numLayersInUse - 1, i, false)] ) );
+
+                ++i;
+            }
+
+            printf( "\n" );
+            printf( "Total error: %.10lf. Average: %.10lf\n", totalError, totalError / outputLayerSize );
+            printf( "\nReminder: maximal: %u. runner up: %u\n", maximal, runnerUp );
+
+            sat = true;
+        }
+        else if ( result == Reluplex::UNSAT )
         {
-            printf( "\nResults written to: %s\n", finalOutputFile );
+            printf( "Can't solve!\n" );
+            sat = false;
+        }
+        else if ( result == Reluplex::ERROR )
+        {
+            printf( "Reluplex error!\n" );
+        }
+        else
+        {
+            printf( "Reluplex not done (quit called?)\n" );
         }
 
-        return result == Reluplex::SAT ? 1 : 0;
+        printf( "Number of explored states: %u\n", reluplex.numStatesExplored() );
     }
     catch ( const Error &e )
     {
-        printf( "Error during verification: %s\n", e.userMessage() );
-        return -1;
+        printf( "main.cpp: Error caught. Code: %u. Errno: %i. Message: %s\n",
+                e.code(),
+                e.getErrno(),
+                e.userMessage() );
+        fflush( 0 );
     }
+
+    end = Time::sampleMicro();
+
+    unsigned milliPassed = Time::timePassed( start, end );
+    unsigned seconds = milliPassed / 1000;
+    unsigned minutes = seconds / 60;
+    unsigned hours = minutes / 60;
+
+    printf( "Total run time: %u milli (%02u:%02u:%02u)\n",
+            Time::timePassed( start, end ), hours, minutes - ( hours * 60 ), seconds - ( minutes * 60 ) );
+
+	return sat;
+}
+
+int main( int argc, char **argv )
+{
+    struct sigaction sa;
+    memset( &sa, 0, sizeof(sa) );
+    sa.sa_handler = got_signal;
+    sigfillset( &sa.sa_mask );
+    sigaction( SIGQUIT, &sa, NULL );
+
+    List<unsigned> points = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    List<double> deltas = { 0.1, 0.075, 0.05, 0.025, 0.01 };
+
+    std::array<std::array<double, 40>, 10> Inputs;
+
+    readCSVFile(Inputs, "perfect_predictions.csv");
+
+    printf("Read .csv file");
+
+    for ( const auto &point : points )
+    {
+
+        //Conversion from std::array to Vector
+        Vector<double> fixedInputs;
+        for (double v : Inputs[point]){
+            fixedInputs.append(v);
+        }
+
+        for ( const auto &delta : deltas )
+        {
+            bool sat = false;
+            unsigned i = 0;
+            while ( ( !sat ) && ( i < 9 ) )
+            {
+                printf( "Performing test for point %u, delta = %.5lf, part %u\n", point, delta, i + 1 );
+                sat = advMain( argc, argv, point, delta, i, fixedInputs );
+                printf( "Test for point %u, delta = %.5lf, part %u DONE. Result = %s\n", point, delta, i + 1, sat ? "SAT" : "UNSAT" );
+                printf( "\n\n" );
+                ++i;
+            }
+        }
+    }
+
+    return 0;
 }
 
 //
 // Local Variables:
-// compile-command: "make -C . "
-// tags-file-name: "./TAGS"
+// compile-command: "make -C .. "
 // c-basic-offset: 4
 // End:
 //
+
