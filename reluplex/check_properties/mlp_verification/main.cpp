@@ -319,7 +319,7 @@ bool advMain( int argc, char **argv, unsigned inputPoint, double inputDelta, uns
         }
         */
 
-        printf("Bounds for input %u: [ %.10lf, %.10lf ]\n", i, lo, hi);
+        //printf("Bounds for input %u: [ %.10lf, %.10lf ]\n", i, lo, hi);
         reluplex.setLowerBound(nodeToVars[Index(0, i, true)], lo);
         reluplex.setUpperBound(nodeToVars[Index(0, i, true)], hi);
     }
@@ -499,8 +499,9 @@ int main( int argc, char **argv )
     sigfillset( &sa.sa_mask );
     sigaction( SIGQUIT, &sa, NULL );
 
-    List<unsigned> points = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-    List<double> deltas = { 0.1, 0.075, 0.05, 0.025, 0.01 };
+    List<unsigned> points = { 0 };
+    //List<double> deltas = { 0.1, 0.075, 0.05, 0.025, 0.01 };
+    List<double> deltas = { 0.025, 0.01 };
 
     std::array<std::array<double, 40>, 10> Inputs;
 
